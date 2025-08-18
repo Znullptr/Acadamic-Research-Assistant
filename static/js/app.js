@@ -149,7 +149,7 @@
         // Check API Status
         async function checkApiStatus() {
             try {
-                const response = await fetch('/api/status');
+                const response = await fetch('/health');
                 if (response.ok) {
                     const data = await response.json();
                     updateApiStatus('online', 'API Online');
