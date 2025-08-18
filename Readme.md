@@ -26,7 +26,6 @@ An intelligent research platform that leverages AI agents and vector search to d
 #### Data Storage
 - **Vector Database**: Chroma for embedding storage and similarity search
 - **Cache**: Redis for session management and temporary data storage
-- **Document Processing**: Support for text-based and OCR-scanned PDFs
 
 #### External Integrations
 - **Google Scholar**: Academic paper discovery
@@ -35,15 +34,6 @@ An intelligent research platform that leverages AI agents and vector search to d
 
 ### Workflow Process
 
-1. **Query Submission**: User submits research query through frontend
-2. **Knowledge Base Check**: System searches existing documents in vector store
-3. **Conditional Discovery**: 
-   - If sufficient documents found (≥ threshold): Proceed to synthesis
-   - If insufficient documents: Trigger discovery agent
-4. **Paper Discovery**: Multi-source search across academic databases
-5. **Content Extraction**: AI-powered extraction of structured content
-6. **Synthesis & Analysis**: Comprehensive 9-point analysis generation
-7. **Report Generation**: Final research report compilation
 
 ## 🤖 AI Agents
 
@@ -101,7 +91,7 @@ git clone https://github.com/your-username/academic-research-assistant.git
 cd academic-research-assistant
 ```
 
-2. **Backend Setup**
+2. **Setup project**
 ```bash
 # Install Python dependencies
 pip install -r requirements.txt
@@ -111,95 +101,17 @@ cp .env.example .env
 # Edit .env with your API keys and configuration
 ```
 
-3. **Frontend Setup**
-```bash
-cd frontend
-npm install
-npm run build
-```
-
-4. **Start Services**
+3. **Start Services**
 ```bash
 # Start Redis
 redis-server
 
-# Start Flask backend
+# Start Fastapi and Flask
+python main.py
 python app.py
-
-# Start frontend (if separate)
-cd frontend && npm start
 ```
 
-### Configuration
-
-Create a `.env` file with the following variables:
-
-```env
-# API Keys
-GOOGLE_SCHOLAR_API_KEY=your_api_key
-SEMANTIC_SCHOLAR_API_KEY=your_api_key
-
-# Database Configuration
-REDIS_URL=redis://localhost:6379
-CHROMA_PERSIST_DIRECTORY=./chroma_db
-
-# Agent Configuration
-DISCOVERY_THRESHOLD=5
-MAX_PAPERS_PER_QUERY=50
-
-```
-
-## 📋 Usage
-
-### Basic Research Query
-
-```python
-from research_assistant import ResearchAssistant
-
-# Initialize the assistant
-assistant = ResearchAssistant()
-
-# Submit a research query
-query = "machine learning in healthcare"
-results = assistant.process_query(query)
-
-# Access analysis results
-themes = results.themes
-challenges = results.challenges
-recommendations = results.recommendations
-```
-
-### API Endpoints
-
-#### Submit Research Query
-```http
-POST /api/research
-Content-Type: application/json
-
-{
-  "query": "your research topic",
-  "max_papers": 50,
-  "include_preprints": true
-}
-```
-
-#### Get Analysis Results
-```http
-GET /api/research/{query_id}/results
-```
-
-#### Upload PDF Documents
-```http
-POST /api/documents/upload
-Content-Type: multipart/form-data
-
-{
-  "files": [pdf_files],
-  "category": "research_papers"
-}
-```
-
-## 🔧 Technical Details
+## 🔧 Technical stack
 
 ### Vector Search
 - **Embedding Model**: Sentence transformers for semantic similarity
@@ -226,9 +138,8 @@ Content-Type: multipart/form-data
 - **Rate Limiting**: Respectful API usage patterns
 
 ### Benchmarks
-- **Query Processing**: < 30 seconds for typical queries
+- **Query Processing**: < 1 minute for typical queries that has already stored documents in knowledgebase (no search required)
 - **Document Indexing**: ~1000 papers/minute
-- **Memory Usage**: < 2GB for 10,000 document corpus
 
 
 ## 📝 License
