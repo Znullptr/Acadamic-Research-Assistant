@@ -135,15 +135,11 @@ When the system has no or few relevant documents for the user research query in 
 
 **Processing Time**: ~5-8 minutes for comprehensive analysis
 
-![Cold scenario](images/cold_research.gif)
-
 ### Scenario 2: Found enough relevant docs in Knowledge Base (Optimized Workflow)
 When enough relevant documents are already available in the knowledge base, the system leverages vector search for instant semantic similarity matching, dramatically reducing processing time.
 
 **Processing Time**: ~1-2 minutes for comprehensive analysis
 **Performance Improvement**: **80% faster** than empty knowledge base scenario
-
-![Hot scenario](images/hot_research.gif)
 
 ### Performance Benefits
 - **Vector Search Efficiency**: Instant retrieval from pre-indexed documents
