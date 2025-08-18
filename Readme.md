@@ -33,7 +33,7 @@ An intelligent research platform that leverages AI agents and vector search to d
 - **ArXiv**: Preprint repository access
 
 ### Workflow Process
-
+![Workflow](images/workflow.png)
 
 ## 🤖 AI Agents
 
@@ -80,15 +80,14 @@ The system provides a comprehensive 9-point analysis for each research topic:
 ```bash
 Python 3.8+
 Redis server
-Node.js (for frontend)
 ```
 
 ### Installation
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/your-username/academic-research-assistant.git
-cd academic-research-assistant
+git clone https://github.com/Znullptr/Academic-Research-Assistant.git
+cd Academic-Research-Assistant
 ```
 
 2. **Setup project**
@@ -129,7 +128,30 @@ python app.py
 - **State Management**: Persistent workflow state tracking
 - **Error Handling**: Robust fallback mechanisms
 
-## 📈 Performance
+## 📈 Performance Comparison
+
+### Scenario 1: No or few relevant docs found in Knowledge Base (Full Workflow)
+When the system has no or few relevant documents for the user research query in the knowledge base, it executes the complete workflow including online paper discovery, content extraction, and analysis. This represents the peak processing time scenario.
+
+**Processing Time**: ~5-8 minutes for comprehensive analysis
+
+![Cold scenario](images/research_demo1.gif)
+
+### Scenario 2: Found enough relevant docs in Knowledge Base (Optimized Workflow)
+When enough relevant documents are already available in the knowledge base, the system leverages vector search for instant semantic similarity matching, dramatically reducing processing time.
+
+**Processing Time**: ~1-2 minutes for comprehensive analysis
+**Performance Improvement**: **80% faster** than empty knowledge base scenario
+
+![Hot scenario](images/researchdemo2.gif)
+
+### Performance Benefits
+- **Vector Search Efficiency**: Instant retrieval from pre-indexed documents
+- **Reduced API Calls**: Minimal external database queries
+- **Cached Analysis**: Leverages previously processed content
+- **Semantic Matching**: Intelligent relevance scoring without full document processing
+
+## 🔧 Performance Optimization Features
 
 ### Optimization Features
 - **Parallel Processing**: Multi-threaded document processing
@@ -138,9 +160,9 @@ python app.py
 - **Rate Limiting**: Respectful API usage patterns
 
 ### Benchmarks
-- **Query Processing**: < 1 minute for typical queries that has already stored documents in knowledgebase (no search required)
+- **Query Processing (No relevant docs )**: 5-8 minutes for full workflow execution
+- **Query Processing (Populated KB)**: 1-2 minutes with 80% performance improvement
 - **Document Indexing**: ~1000 papers/minute
-
 
 ## 📝 License
 
