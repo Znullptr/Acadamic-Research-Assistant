@@ -162,7 +162,6 @@ class VectorStoreManager:
                 **search_kwargs
             )
             
-            logger.info(f"Found {len(results)} similar documents for query: {query[:50]}...")
             return results
             
         except Exception as e:
@@ -193,7 +192,7 @@ class VectorStoreManager:
             logger.error(f"Error in similarity search with scores: {e}")
             return []
     
-    async def get_related_documents(
+    async def get_same_documents(
         self, 
         paper_id: str, 
         k: int = 5
@@ -202,24 +201,14 @@ class VectorStoreManager:
         try:
             # Search for documents from the same paper
             same_paper_docs = await self.similarity_search(
-                query="",  # Empty query to get by filter
-                k=k*2,  # Get more to filter
+                query="", 
+                k=k*2,
                 filter_metadata={"paper_id": paper_id}
             )
-            
             if same_paper_docs:
-                # If we have content from the same paper, find similar content from other papers
-                sample_content = same_paper_docs[0].page_content
-                
-                related_docs = await self.similarity_search(
-                    query=sample_content[:500],  # Use first 500 chars as query
-                    k=k,
-                    filter_metadata={"paper_id": {"$ne": paper_id}}  # Exclude same paper
-                )
-                
-                return related_docs
-            
+                return same_paper_docs
             return []
+            
             
         except Exception as e:
             logger.error(f"Error getting related documents: {e}")
@@ -232,13 +221,12 @@ class VectorStoreManager:
             collection_info = self.collection.count()
             
             # Query some sample documents to analyze metadata
-            sample_docs = await self.similarity_search("", k=100)  # Get sample
+            sample_docs = await self.similarity_search("", k=10000) 
             
             # Analyze papers
             paper_ids = set()
             venues = {}
             authors = set()
-            extraction_methods = {}
             
             for doc in sample_docs:
                 metadata = doc.metadata
@@ -251,20 +239,13 @@ class VectorStoreManager:
                     venues[venue] = venues.get(venue, 0) + 1
                 
                 if metadata.get("authors"):
-                    if isinstance(metadata["authors"], list):
-                        authors.update(metadata["authors"])
-                
-                if metadata.get("extraction_method"):
-                    method = metadata["extraction_method"]
-                    extraction_methods[method] = extraction_methods.get(method, 0) + 1
+                        authors.update(metadata["authors"].split(','))
             
             return {
                 "total_documents": collection_info,
                 "unique_papers": len(paper_ids),
-                "top_venues": sorted(venues.items(), key=lambda x: x[1], reverse=True)[:10],
+                "top_venue": sorted(venues.items(), key=lambda x: x[1], reverse=True)[0][0],
                 "unique_authors": len(authors),
-                "extraction_methods": extraction_methods,
-                "sample_size": len(sample_docs)
             }
             
         except Exception as e:

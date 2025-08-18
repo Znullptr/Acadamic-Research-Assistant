@@ -1,16 +1,13 @@
-import asyncio
 import aiohttp
 import pytesseract
-from pdf2image import convert_from_bytes, convert_from_path
-import PyPDF2
+from pdf2image import convert_from_bytes
 import pdfplumber
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List
 from dataclasses import dataclass
-from pathlib import Path
-import tempfile
 import logging
 import re
 from PIL import Image
+from bs4 import BeautifulSoup
 import io
 
 logger = logging.getLogger(__name__)
@@ -20,10 +17,8 @@ class ExtractedContent:
     """Structure for extracted PDF content"""
     text: str
     metadata: Dict
-    sections: List[Dict]  # Title, content, page_number
+    sections: List[str]
     references: List[str]
-    figures: List[Dict]   # Caption, page_number
-    tables: List[Dict]    # Content, page_number
     
 class PDFProcessor:
     """Advanced PDF processing with OCR capabilities"""
@@ -69,14 +64,17 @@ class PDFProcessor:
     async def process_pdf_content(self, pdf_content: bytes) -> Optional[ExtractedContent]:
         """Main PDF processing function"""
         try:
-            # Try text extraction first (faster)
+            # Try text extraction first
             extracted = await self.extract_text_based(pdf_content)
             
-            # If text extraction fails or yields poor results, use OCR
-            if not extracted or len(extracted.text.strip()) < 100:
-                logger.info("Text extraction failed/poor quality, trying OCR...")
-                extracted = await self.extract_with_ocr(pdf_content)
-            
+            # If text extraction fails or yields poor results, use OCR/HTML
+            if not extracted:
+                logger.info("Text extraction failed/poor quality, trying HTML...")
+                extracted = await self.extract_html_content(pdf_content)
+                if not extracted:
+                    logger.info("HTML extraction failed/poor quality, trying OCR...")
+                    extracted = await self.extract_with_ocr(pdf_content)
+
             if extracted:
                 # Post-process the extracted content
                 extracted = await self.post_process_content(extracted)
@@ -90,33 +88,19 @@ class PDFProcessor:
     async def extract_text_based(self, pdf_content: bytes) -> Optional[ExtractedContent]:
         """Extract text from text-based PDFs"""
         try:
-            # Method 1: PyPDF2 for basic extraction
-            text_pypdf2 = ""
             metadata = {}
             
-            with io.BytesIO(pdf_content) as pdf_buffer:
-                pdf_reader = PyPDF2.PdfReader(pdf_buffer)
-                metadata = {
-                    'pages': len(pdf_reader.pages),
-                    'title': pdf_reader.metadata.get('/Title', '') if pdf_reader.metadata else '',
-                    'author': pdf_reader.metadata.get('/Author', '') if pdf_reader.metadata else '',
-                }
-                
-                for page in pdf_reader.pages:
-                    text_pypdf2 += page.extract_text() + "\n"
-            
-            # Method 2: pdfplumber for better structure extraction
+            #pdfplumber for better structure extraction
             sections = []
             tables = []
+            final_text= ""
             
             with io.BytesIO(pdf_content) as pdf_buffer:
                 with pdfplumber.open(pdf_buffer) as pdf:
-                    current_text = ""
-                    
                     for page_num, page in enumerate(pdf.pages):
                         page_text = page.extract_text()
                         if page_text:
-                            current_text += page_text + "\n"
+                            final_text += page_text + "\n"
                             
                             # Extract tables
                             page_tables = page.extract_tables()
@@ -125,25 +109,19 @@ class PDFProcessor:
                                     'content': table,
                                     'page_number': page_num + 1
                                 })
-            
-            # Use the better extraction result
-            final_text = current_text if len(current_text) > len(text_pypdf2) else text_pypdf2
-            
-            if len(final_text.strip()) < 50:
+                        
+            if len(final_text.strip()) < 200:
                 return None
                 
             # Extract sections and references
             sections = self.extract_sections(final_text)
             references = self.extract_references(final_text)
-            figures = self.extract_figure_captions(final_text)
             
             return ExtractedContent(
                 text=final_text,
                 metadata=metadata,
                 sections=sections,
-                references=references,
-                figures=figures,
-                tables=tables
+                references=references
             )
             
         except Exception as e:
@@ -178,13 +156,13 @@ class PDFProcessor:
                 all_text += page_text + f"\n--- Page {page_num + 1} ---\n"
                 
                 # Try to identify figures/images in the page
-                if len(page_text.strip()) < 100:  # Likely contains mostly images
+                if len(page_text.strip()) < 100:
                     figures.append({
                         'caption': f"Image content on page {page_num + 1}",
                         'page_number': page_num + 1
                     })
             
-            if len(all_text.strip()) < 50:
+            if len(all_text.strip()) < 200:
                 return None
             
             # Extract structured content
@@ -201,13 +179,53 @@ class PDFProcessor:
                 text=all_text,
                 metadata=metadata,
                 sections=sections,
-                references=references,
-                figures=figures,
-                tables=[] 
+                references=references 
             )
             
         except Exception as e:
             logger.error(f"OCR extraction error: {e}")
+            return None
+        
+    async def extract_html_content(self, html_content: bytes, original_url: str = "") -> Optional[str]:
+        """Handle HTML content and try to extract PDF URL or text content"""
+        try:
+            html_text = html_content.decode('utf-8', errors='ignore')
+            
+            # Extract text content from HTML
+            soup = BeautifulSoup(html_text, 'html.parser')
+            
+            # Remove script and style elements
+            for element in soup(['script', 'style', 'nav', 'header', 'footer']):
+                element.decompose()
+            
+            # Extract text
+            text = soup.get_text(separator='\n', strip=True)
+            
+            # Clean up text
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            cleaned_text = '\n'.join(lines)
+            
+            if len(cleaned_text) < 200:
+                return None
+            
+            # Extract structured content
+            sections = self.extract_sections(cleaned_text)
+            references = self.extract_references(cleaned_text)
+            
+            metadata = { 
+                'extraction_method': 'Html',
+                'title': self.extract_title_from_text(cleaned_text)
+            }
+            
+            return ExtractedContent(
+                text=cleaned_text,
+                metadata=metadata,
+                sections=sections,
+                references=references 
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to handle HTML content: {e}")
             return None
     
     def preprocess_image_for_ocr(self, image: Image.Image) -> Image.Image:
@@ -218,53 +236,38 @@ class PDFProcessor:
         
         return image
     
-    def extract_sections(self, text: str) -> List[Dict]:
-        """Extract document sections based on common patterns"""
-        sections = []
-        
-        # Common section headers pattern
+    def extract_sections(self, text: str) -> List[str]:
+        """Extract sections based on common patterns."""
         section_patterns = [
             r'^(\d+\.?\s+[A-Z][^.\n]*)',  # Numbered sections
             r'^([A-Z][A-Z\s]{3,})\s*$',   # ALL CAPS headers
             r'^\s*(Abstract|Introduction|Method|Results|Discussion|Conclusion|References)',  # Common academic sections
         ]
-        
+
         lines = text.split('\n')
-        current_section = None
-        current_content = []
-        
-        for line_num, line in enumerate(lines):
-            line = line.strip()
-            
-            # Check if line matches section pattern
-            is_section = False
-            for pattern in section_patterns:
-                if re.match(pattern, line, re.IGNORECASE | re.MULTILINE):
-                    # Save previous section
-                    if current_section and current_content:
-                        sections.append({
-                            'title': current_section,
-                            'content': '\n'.join(current_content).strip(),
-                            'start_line': len(sections)
-                        })
-                    
-                    current_section = line
-                    current_content = []
-                    is_section = True
-                    break
-            
-            if not is_section and line:
-                current_content.append(line)
-        
-        # Add final section
-        if current_section and current_content:
-            sections.append({
-                'title': current_section,
-                'content': '\n'.join(current_content).strip(),
-                'start_line': len(sections)
-            })
-        
+        sections = []
+        current_lines = []
+
+        def flush_section():
+            if current_lines:
+                sections.append(" ".join(line.strip() for line in current_lines).strip())
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue  # Skip empty lines
+
+            # Check if this line is a section header
+            if any(re.match(pattern, stripped, re.IGNORECASE) for pattern in section_patterns):
+                flush_section()
+                current_lines.clear()
+                current_lines.append(stripped)
+            else:
+                current_lines.append(stripped)
+
+        flush_section()
         return sections
+
     
     def extract_references(self, text: str) -> List[str]:
         """Extract references from the text"""
@@ -282,26 +285,10 @@ class PDFProcessor:
             
             for ref in ref_items:
                 ref = ref.strip()
-                if len(ref) > 20:  # Filter out short/invalid references
+                if len(ref) > 20:
                     references.append(ref)
         
         return references[:50]  # Limit to prevent overcrowding
-    
-    def extract_figure_captions(self, text: str) -> List[Dict]:
-        """Extract figure captions"""
-        figures = []
-        
-        # Pattern for figure captions
-        fig_pattern = r'(Figure?\s+\d+[.:]\s*[^\n]+)'
-        matches = re.finditer(fig_pattern, text, re.IGNORECASE)
-        
-        for match in matches:
-            figures.append({
-                'caption': match.group(1).strip(),
-                'position': match.start()
-            })
-        
-        return figures
     
     def extract_title_from_text(self, text: str) -> str:
         """Extract document title from text"""

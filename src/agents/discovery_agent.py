@@ -3,8 +3,6 @@ import aiohttp
 from typing import List, Dict, Optional
 import arxiv
 from scholarly import scholarly
-import requests
-from bs4 import BeautifulSoup
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
@@ -18,7 +16,6 @@ class Paper:
     authors: List[str]
     abstract: str
     url: str
-    pdf_url: Optional[str]
     publication_date: Optional[datetime]
     venue: Optional[str]
     citations: int = 0
@@ -28,9 +25,10 @@ class Paper:
 class DiscoveryAgent:
     """Agent responsible for discovering academic papers"""
     
-    def __init__(self, config):
+    def __init__(self, config, vector_store=None):
         self.config = config
         self.session = None
+        self.vector_store = vector_store
         
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(
@@ -42,28 +40,107 @@ class DiscoveryAgent:
         if self.session:
             await self.session.close()
     
-    async def search_papers(self, query: str, max_results: int = None) -> List[Paper]:
-        """Main search function that coordinates all sources"""
-        max_results = max_results or self.config.max_papers_per_search
+    async def is_paper_in_vectorstore(self, paper: Paper) -> bool:
+        """Check if paper already exists in vector store"""
+        if not self.vector_store:
+            return False
         
-        # Search across all sources concurrently
-        tasks = [
-            self.search_arxiv(query, max_results // 2),
-            #self.search_semantic_scholar(query, max_results // 3),
-            self.search_google_scholar(query, max_results // 2),
-        ]
+        try:
+            # Check by URL/paper_id
+            if paper.url:
+                existing_docs = await self.vector_store.get_same_documents(paper.url, k=1)
+                if existing_docs:
+                    return True
+            
+            # Check by DOI if available
+            if paper.doi:
+                existing_docs = await self.vector_store.similarity_search(
+                    query="",
+                    k=1,
+                    filter_metadata={"doi": paper.doi}
+                )
+                if existing_docs:
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error checking paper existence: {e}")
+            return False
         
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def filter_existing_papers(self, papers: List[Paper]) -> List[Paper]:
+        """Filter out papers that already exist in vector store"""
+        if not self.vector_store:
+            return papers
         
-        # Combine and deduplicate results
-        all_papers = []
-        for result in results:
-            if isinstance(result, list):
-                all_papers.extend(result)
+        filtered_papers = []
+        existing_count = 0
+        
+        for paper in papers:
+            if await self.is_paper_in_vectorstore(paper):
+                existing_count += 1
+                logger.debug(f"Skipping existing paper: {paper.title[:50]}...")
             else:
-                logger.error(f"Search error: {result}")
+                filtered_papers.append(paper)
         
-        return self.deduplicate_papers(all_papers)[:max_results]
+        logger.info(f"Filtered out {existing_count} existing papers, {len(filtered_papers)} new papers remain")
+        return filtered_papers
+        
+    async def search_papers(self, query: str, max_results: int = None) -> List[Paper]:
+        """Iterative search approach with exponential backoff"""
+        
+        if max_results is None:
+            max_results = 20
+        
+        all_papers = []
+        search_attempts = 0
+        max_attempts = 5
+        
+        while len(all_papers) < max_results and search_attempts < max_attempts:
+            search_attempts += 1
+            
+            # Calculate how many more we need
+            search_count = min( max_results * search_attempts * 2, 75)
+            
+            logger.info(f"Search attempt {search_attempts}: looking for {search_count} papers")
+            
+            # Search with current parameters
+            await asyncio.sleep(2 * search_attempts)  
+            
+            tasks = [
+                self.search_arxiv(query, search_count // 2),
+                #self.search_semantic_scholar(query, max_results // 3),
+                self.search_google_scholar(query, search_count // 2),
+            ]
+            
+            try:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Process results
+                batch_papers = []
+                for result in results:
+                    if isinstance(result, list):
+                        batch_papers.extend(result)
+                    else:
+                        logger.error(f"Search error in attempt {search_attempts}: {result}")
+                
+                # Deduplicate and filter
+                batch_papers = self.deduplicate_papers(batch_papers)
+                filtered_batch = await self.filter_existing_papers(batch_papers)
+                
+                # Add new papers
+                for paper in filtered_batch:
+                    if not any(p.url == paper.url for p in all_papers):
+                        all_papers.append(paper)
+                
+                logger.info(f"Attempt {search_attempts}: found {len(filtered_batch)} new papers, total: {len(all_papers)}")
+                
+            except Exception as e:
+                logger.error(f"Search attempt {search_attempts} failed: {e}")
+        
+        logger.info(f"Search completed: {len(all_papers)} papers found after {search_attempts} attempts")
+        return all_papers
     
     async def search_arxiv(self, query: str, max_results: int) -> List[Paper]:
         """Search ArXiv papers"""
@@ -82,8 +159,7 @@ class DiscoveryAgent:
                     title=result.title,
                     authors=[author.name for author in result.authors],
                     abstract=result.summary,
-                    url=result.entry_id,
-                    pdf_url=result.pdf_url,
+                    url=result.pdf_url,
                     publication_date=result.published,
                     venue="arXiv",
                     source="arxiv",
@@ -133,8 +209,7 @@ class DiscoveryAgent:
                             title=item.get("title", ""),
                             authors=[author.get("name", "") for author in item.get("authors", [])],
                             abstract=item.get("abstract", ""),
-                            url=item.get("url", ""),
-                            pdf_url=pdf_url,
+                            url=pdf_url,
                             publication_date=pub_date,
                             venue=item.get("venue"),
                             citations=item.get("citationCount", 0),
@@ -153,7 +228,7 @@ class DiscoveryAgent:
             return []
     
     async def search_google_scholar(self, query: str, max_results: int) -> List[Paper]:
-        """Search Google Scholar (using scholarly library)"""
+        """Search Google Scholar"""
         try:
             papers = []
             search_query = scholarly.search_pubs(query)
@@ -177,8 +252,7 @@ class DiscoveryAgent:
                         title=bib.get("title", ""),
                         authors=bib.get("author", ""),
                         abstract=bib.get("abstract", ""),
-                        url=result.get("pub_url", ""),
-                        pdf_url=result.get("eprint_url"),
+                        url=result.get("eprint_url", ""),
                         publication_date=pub_date,
                         venue=bib.get("venue"),
                         citations=result.get("num_citations", 0),

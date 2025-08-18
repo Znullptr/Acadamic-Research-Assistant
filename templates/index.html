@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academic Research Assistant</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-microscope"></i>
+                    <h1>Research AI</h1>
+                </div>
+            </div>
+            
+            <div class="nav-menu">
+                <div class="nav-item active" data-page="research">
+                    <i class="fas fa-search"></i>
+                    <span>Research Chat</span>
+                </div>
+                <div class="nav-item" data-page="knowledge">
+                    <i class="fas fa-database"></i>
+                    <span>Knowledge Base</span>
+                </div>
+                <div class="nav-item" data-page="statistics">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Analytics</span>
+                </div>
+                <div class="nav-item" data-page="history">
+                    <i class="fas fa-history"></i>
+                    <span>Chats</span>
+                </div>
+                <div class="nav-item" data-page="settings">
+                    <i class="fas fa-cog"></i>
+                    <span>Settings</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="header">
+                <h2 class="header-title">Academic Research Assistant</h2>
+                <div class="header-actions">
+                    <div class="status-indicator">
+                        <div class="status-dot" id="api-status-dot"></div>
+                        <span id="api-status-text">Checking API...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Research Chat Page -->
+            <div class="page active" id="research-page">
+                <div class="chat-container">
+                    <div class="chat-messages" id="chat-messages">
+                        <!-- Welcome Message -->
+                        <div class="message assistant">
+                            <div class="message-avatar">
+                                <i class="fas fa-robot"></i>
+                            </div>
+                            <div class="message-content">
+                                <div class="message-bubble">
+                                    <p>Welcome to the Academic Research Assistant! 🔬</p>
+                                    <p>I can help you discover, analyze, and synthesize academic literature. Try asking me:</p>
+                                    <ul style="margin: 1rem 0; padding-left: 1.5rem;">
+                                        <li>"Find and analyse papers on transformer architecture in NLP"</li>
+                                        <li>"Search and analyse recent COVID-19 research papers and identify trends"</li>
+                                        <li>"Find and Analyze machine learning applications papers in healthcare"</li>
+                                    </ul>
+                                    <p>What would you like to research today?</p>
+                                </div>
+                                <div class="message-time">Just now</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Input -->
+                    <div class="chat-input-container">
+                        <div class="chat-input-wrapper">
+                            <textarea 
+                                class="chat-input" 
+                                id="chat-input" 
+                                placeholder="Ask about research topics, papers, or request analysis..."
+                                rows="1"
+                            ></textarea>
+                            <button class="send-button" id="send-btn" title="Send message">
+                                <i class="fas fa-paper-plane"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Knowledge Base Page -->
+            <div class="page" id="knowledge-page">
+                <div class="page-content">
+                    <h2>Knowledge Base</h2>
+                    <br>
+                <div class="knowledge-search">
+                    <div class="knowledge-header">
+                        <h3>Knowledge Base Management</h3>
+                        <button class="upload-button" id="upload-docs-btn">
+                            <i class="fas fa-upload"></i> Upload Documents
+                        </button>
+                    </div>
+                    <input type="file" id="pdf-file-input" accept=".pdf" multiple style="display: none;">
+                    
+                    <div class="search-section">
+                        <h4>Search Documents</h4>
+                        <br>
+                        <div class="search-input-wrapper">
+                            <input type="text" class="search-input" id="knowledge-search-input" placeholder="Search for papers, authors, topics...">
+                            <button class="search-button" id="knowledge-search-btn">
+                                <i class="fas fa-search"></i> Search
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="search-results" id="knowledge-results"></div>
+                </div>
+                </div>
+            </div>
+
+            <!-- Statistics Page -->
+            <div class="page" id="statistics-page">
+                <div class="page-content">
+                    <h2>Research Analytics</h2>
+                    <br>
+                    <div class="stats-grid" id="stats-grid">
+                        <div class="stat-card">
+                            <h3>Loading Statistics...</h3>
+                            <div class="value">---</div>
+                            <div class="description">Please wait while we gather data</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History Page -->
+            <div class="page" id="history-page">
+                <div class="page-content">
+                    <h2>Chats</h2>
+                    <br>
+                    <div id="history-content">
+                        <p>No chats created yet.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Page -->
+            <div class="page" id="settings-page">
+                <div class="page-content">
+                    <h2>Settings</h2>
+                    <br>
+                    <div class="stat-card">
+                        <h3>API Configuration</h3>
+                        <p>Backend URL: http://localhost:8000</p>
+                        <p>Status: <span id="settings-api-status">Checking...</span></p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Application Info</h3>
+                        <p>Version: 1.0.0</p>
+                        <p>Environment: Development</p>
+                        <button class="search-button" onclick="clearChatHistory()">Clear Chat History</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+   <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

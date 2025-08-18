@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-import asyncio
+from contextlib import asynccontextmanager
 import logging
 from datetime import datetime
 import uuid
@@ -10,22 +10,58 @@ import uuid
 from src.workflows.research_workflow import ResearchWorkflow
 from src.utils.config import config
 from src.rag.vector_store import VectorStoreManager
+from src.utils.helpers import process_pdf_papers
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# In-memory storage for request tracking
+request_status = {}
+
 # Initialize FastAPI app
-app = FastAPI(
-    title="Academic Research Assistant API",
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global workflow_instance, vector_store_instance
+    
+    try:
+        logger.info("Initializing Academic Research Assistant...")
+
+        # Initialize vectorstore
+        vector_store_instance = VectorStoreManager(config)
+        await vector_store_instance.initialize()
+
+        # Initialize workflow
+        workflow_instance = ResearchWorkflow(config, vector_store_instance)
+        await workflow_instance.initialize()
+
+        logger.info("Application initialized successfully")
+        yield 
+
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {e}")
+        raise
+    finally:
+        try:
+            if workflow_instance:
+                await workflow_instance.cleanup()
+
+            if vector_store_instance:
+                await vector_store_instance.close()
+
+            logger.info("Application shutdown complete")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+
+app = FastAPI(title="Academic Research Assistant API",
     description="AI-powered academic research discovery and synthesis",
-    version="1.0.0"
-)
+    version="1.0.0",
+    lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -57,47 +93,6 @@ class StatusResponse(BaseModel):
     message: str
     timestamp: str
 
-# In-memory storage for request tracking (use Redis in production)
-request_status = {}
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the application"""
-    global workflow_instance, vector_store_instance
-    
-    try:
-        logger.info("Initializing Academic Research Assistant...")
-        
-        # Initialize workflow
-        workflow_instance = ResearchWorkflow(config)
-        await workflow_instance.initialize()
-        
-        # Initialize vector store for direct access
-        vector_store_instance = VectorStoreManager(config)
-        await vector_store_instance.initialize()
-        
-        logger.info("Application initialized successfully")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize application: {e}")
-        raise
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    global workflow_instance, vector_store_instance
-    
-    try:
-        if workflow_instance:
-            await workflow_instance.cleanup()
-        
-        if vector_store_instance:
-            await vector_store_instance.close()
-            
-        logger.info("Application shutdown complete")
-        
-    except Exception as e:
-        logger.error(f"Error during shutdown: {e}")
 
 @app.get("/", response_model=StatusResponse)
 async def root():
@@ -117,18 +112,17 @@ async def start_research(request: ResearchRequest, background_tasks: BackgroundT
     # Initialize request status
     request_status[request_id] = {
         "status": "started",
+        "progress": 0,
+        "current_step": "initializing",
         "query": request.query,
         "started_at": datetime.now().isoformat(),
-        "progress": "initializing"
     }
     
     # Start background task
     background_tasks.add_task(
         run_research_task, 
         request_id, 
-        request.query, 
-        request.max_papers,
-        request.include_analysis
+        request.query
     )
     
     return {
@@ -139,24 +133,41 @@ async def start_research(request: ResearchRequest, background_tasks: BackgroundT
 
 async def run_research_task(
     request_id: str, 
-    query: str, 
-    max_papers: int,
-    include_analysis: bool
+    query: str
 ):
-    """Background task to run research workflow"""
+    """Background task to run research workflow with detailed progress tracking"""
+    
+    async def progress_callback(progress: int, step: str):
+        """Callback function to update progress"""
+        try:
+            # Update the request status with current progress
+            request_status[request_id].update({
+                "progress": progress,
+                "current_step": step,
+                "last_updated": datetime.now().isoformat()
+            })
+            logger.info(f"Research task {request_id}: {progress}% - {step}")
+        except Exception as e:
+            logger.warning(f"Failed to update progress for {request_id}: {e}")
     
     try:
-        # Update status
-        request_status[request_id]["status"] = "running"
-        request_status[request_id]["progress"] = "discovering papers"
+        # Initial status update
+        request_status[request_id].update({
+            "status": "running",
+            "started_at": datetime.now().isoformat()
+        })
         
-        # Run the research workflow
-        results = await workflow_instance.run_research(query)
+        # Run the research workflow with progress callback
+        results = await workflow_instance.run_research(
+            query=query,
+            progress_callback=progress_callback
+        )
         
-        # Update status with results
+        # Final status update with results
         request_status[request_id].update({
             "status": "completed",
-            "progress": "finished",
+            "progress": 100,
+            "current_step": "completed",
             "results": results,
             "completed_at": datetime.now().isoformat()
         })
@@ -166,19 +177,18 @@ async def run_research_task(
     except Exception as e:
         logger.error(f"Research task {request_id} failed: {e}")
         request_status[request_id].update({
-            "status": "failed",
-            "progress": "error",
+            "status": "completed with errors",
+            "progress": 100,
+            "current_step": "failed",
             "error": str(e),
             "completed_at": datetime.now().isoformat()
         })
 
 @app.get("/research/{request_id}/status")
-async def get_research_status(request_id: str):
+def get_research_status(request_id: str):
     """Get status of a research task"""
-    
     if request_id not in request_status:
         raise HTTPException(status_code=404, detail="Request not found")
-    
     return request_status[request_id]
 
 @app.get("/research/{request_id}/results", response_model=ResearchResponse)
@@ -232,6 +242,73 @@ async def search_knowledge_base(query: str, k: int = 10):
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/update_knowledgebase", response_model=Dict[str, Any])
+async def add_pdf_files_to_knowledgebase(data: Dict[str, str]):
+    """
+    Process uploaded PDF files and add them to the knowledge base
+    
+    Args:
+        data: Dictionary containing upload_path and other parameters
+        
+    Returns:
+        Dict containing processing results and statistics
+    """
+    try:
+        # Validate input data
+        upload_path = data.get("upload_path")
+        if not upload_path:
+            raise HTTPException(
+                status_code=500,
+                detail="upload_path is required"
+            )
+        
+        logger.info(f"Starting knowledge base update with upload_path: {upload_path}")
+        
+        # Process PDF files
+        try:
+            # Call the async processing function
+            results = await process_pdf_papers(config, vector_store_instance, upload_path)
+            
+            # Log results
+            logger.info(f"Processing completed: {results['success_count']} successful, {results['error_count']} errors")
+            
+            # Determine response status
+            if results["error_count"] == 0:
+                status = "success"
+                message = f"Successfully processed {results['success_count']} PDF files"
+            elif results["success_count"] == 0:
+                status = "error" 
+                message = f"Failed to process all {results['error_count']} PDF files"
+            else:
+                status = "partial_success"
+                message = f"Processed {results['success_count']} files successfully, {results['error_count']} failed"
+            
+            return {
+                "status": status,
+                "message": message,
+                "upload_path": upload_path,
+                "processed_count": results["success_count"],
+                "error_count": results["error_count"],
+                "files_processed": results["processed_files"],
+                "errors": results["errors"],
+            }
+            
+        except Exception as processing_error:
+            logger.error(f"Error during PDF processing: {str(processing_error)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Error processing PDF files: {str(processing_error)}"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in add_pdf_files_to_knowledgebase: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
 
 @app.get("/statistics")
 async def get_statistics():

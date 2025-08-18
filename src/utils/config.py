@@ -14,7 +14,7 @@ class Config:
         # Database Configuration
         self.chroma_db_path = "./chroma_db"
         # Processing Settings
-        self.max_papers_per_search = 10
+        self.max_papers_per_search = int(os.getenv("MAX_PAPERS_PER_SEARCH"))
         self.ocr_language = "eng"
         self.log_level = "INFO"
         # Performance Settings

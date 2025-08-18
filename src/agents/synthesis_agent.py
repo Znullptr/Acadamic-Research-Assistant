@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 import json
 import logging
 from datetime import datetime, timezone
-import pytz
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -79,21 +79,21 @@ class SynthesisAgent:
         self,
         query: str,
         papers: List[Dict],
-        contents: List[Dict],
-        vector_store=None
+        is_web_extracted: bool = False,
     ) -> Dict[str, Any]:
         """Main synthesis function"""
         try:
             # Prepare data for synthesis
-            synthesis_data = self.prepare_synthesis_data(papers, contents)
+            synthesis_data = self.prepare_synthesis_data(papers)
+                
             # Generate different aspects of synthesis
             summary = await self.generate_summary(query, synthesis_data)
-            key_findings = await self.extract_key_findings(query, synthesis_data, vector_store)
+            key_findings = await self.extract_key_findings(query, synthesis_data)
             research_gaps = await self.identify_research_gaps(query, synthesis_data)
             methodology_trends = await self.analyze_methodology_trends(synthesis_data)
             future_directions = await self.suggest_future_directions(query, synthesis_data)
-            citation_network = self.analyze_citation_network(papers)
-            timeline_insights = self.analyze_temporal_trends(papers)
+            citation_network = self.analyze_citation_network(synthesis_data["unique_papers"])
+            timeline_insights = self.analyze_temporal_trends(synthesis_data["unique_papers"])
             
             # Combine all results
             result = {
@@ -105,8 +105,8 @@ class SynthesisAgent:
                 "citation_network": citation_network,
                 "timeline_insights": timeline_insights,
                 "meta_analysis": {
-                    "total_papers": len(papers),
-                    "papers_with_content": len(contents),
+                    "local_papers": 0 if is_web_extracted else synthesis_data.get("total_papers"),
+                    "web_extracted_content": 0 if not is_web_extracted else synthesis_data.get("total_papers"),
                     "avg_citations": sum(p.get("citations", 0) for p in papers) / max(len(papers), 1),
                     "date_range": self.get_date_range(papers),
                     "top_venues": self.get_top_venues(papers)
@@ -128,13 +128,15 @@ class SynthesisAgent:
                 "meta_analysis": {}
             }
     
-    def prepare_synthesis_data(self, papers: List[Dict], contents: List[Dict]) -> Dict[str, Any]:
+    def prepare_synthesis_data(self, papers: List[Dict]) -> Dict[str, Any]:
         """Prepare and structure data for synthesis"""
         
         # Create paper-content mapping
         content_by_paper = {}
-        for content in contents:
-            paper_id = content.get("paper_id", "")
+        seen_urls = set()
+        unique_papers = []
+        for content in papers:
+            paper_id = content.get("url", "")
             content_by_paper[paper_id] = content
         
         # Combine paper metadata with content
@@ -142,25 +144,31 @@ class SynthesisAgent:
         for paper in papers:
             paper_data = paper.copy()
             paper_id = paper.get("url", "")
+
+            if paper_id and paper_id not in seen_urls:
+                seen_urls.add(paper_id)
+                unique_papers.append(paper)
+            elif not paper_id:
+                unique_papers.append(paper)
             
             if paper_id in content_by_paper:
                 content = content_by_paper[paper_id]
                 paper_data["full_text"] = content.get("text", "")
                 paper_data["sections"] = content.get("sections", [])
                 paper_data["references"] = content.get("references", [])
-                paper_data["figures"] = content.get("figures", [])
                 paper_data["has_content"] = True
             else:
                 paper_data["has_content"] = False
             
             enriched_papers.append(paper_data)
+
         
         return {
             "enriched_papers": enriched_papers,
-            "total_papers": len(papers),
-            "papers_with_content": len(contents),
+            "unique_papers": unique_papers,
+            "total_papers": len(unique_papers),
             "abstracts": [p.get("abstract", "") for p in papers if p.get("abstract")],
-            "all_text": " ".join([c.get("text", "") for c in contents])
+            "all_text": " ".join([p.get("text", "") for p in papers])
         }
     
     async def generate_summary(self, query: str, data: Dict[str, Any]) -> str:
@@ -175,7 +183,6 @@ class SynthesisAgent:
             Research Query: {query}
             
             Papers analyzed: {data['total_papers']}
-            Papers with full content: {data['papers_with_content']}
             
             Key abstracts and content snippets:
             {' '.join(data['abstracts'][:5])}
@@ -201,26 +208,9 @@ class SynthesisAgent:
         self, 
         query: str, 
         data: Dict[str, Any], 
-        vector_store=None
     ) -> List[Dict[str, Any]]:
         """Extract key findings from the literature"""
-        
-        # Use vector search to find most relevant content
-        relevant_content = []
-        if vector_store:
-            try:
-                search_results = await vector_store.similarity_search(
-                    query + " key findings results conclusions",
-                    k=10
-                )
-                relevant_content = [doc.page_content for doc in search_results]
-            except Exception as e:
-                logger.warning(f"Vector search failed: {e}")
-        
-        # Fallback to abstracts if vector search fails
-        if not relevant_content:
-            relevant_content = data['abstracts'][:10]
-        
+                
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content="""You are a research analyst extracting key findings from academic literature. 
             Identify the most significant and well-supported findings, avoiding speculation and focusing on 
@@ -230,7 +220,7 @@ class SynthesisAgent:
             Research Query: {query}
             
             Relevant content from papers:
-            {' '.join(relevant_content)}
+            {' '.join(data['abstracts'][:5])}
             
             Extract 5-8 key findings. For each finding, provide:
             1. The main finding (clear and specific)
@@ -244,9 +234,13 @@ class SynthesisAgent:
         try:
             response = await self.llm.ainvoke(prompt.format_messages())
             
+            
             # Parse JSON response
             try:
-                findings_json = json.loads(response.content)
+                content = response.content.strip()
+                content = re.sub(r'```(?:json)?\s*', '', content)
+                content = content.replace('```', '').strip()
+                findings_json = json.loads(content)
                 return findings_json
             except json.JSONDecodeError:
                 # Fallback parsing if JSON fails
@@ -269,7 +263,7 @@ class SynthesisAgent:
             
             Analysis of {data['total_papers']} papers in this area.
             
-            Sample content: {data['all_text'][:2000]}
+            Sample content: {data['all_text'][:5000]}
             
             Identify 3-5 significant research gaps or opportunities. For each gap:
             1. Description of what's missing or understudied
@@ -283,7 +277,10 @@ class SynthesisAgent:
         try:
             response = await self.llm.ainvoke(prompt.format_messages())
             try:
-                gaps_json = json.loads(response.content)
+                content = response.content.strip()
+                content = re.sub(r'```(?:json)?\s*', '', content)
+                content = content.replace('```', '').strip()
+                gaps_json = json.loads(content)
                 return gaps_json
             except json.JSONDecodeError:
                 return self.parse_gaps_from_text(response.content)
@@ -300,9 +297,8 @@ class SynthesisAgent:
             if paper.get('has_content'):
                 # Look for methodology sections
                 for section in paper.get('sections', []):
-                    section_title = section.get('title', '').lower()
-                    if any(keyword in section_title for keyword in ['method', 'approach', 'technique', 'model']):
-                        methodologies.append(section.get('content', '')[:500])
+                    if any(keyword in section for keyword in ['method', 'approach', 'technique', 'model']):
+                        methodologies.append(section[:500])
         
         if not methodologies:
             return ["Insufficient methodology information available"]
@@ -374,7 +370,7 @@ class SynthesisAgent:
             {
                 "title": paper.get('title', 'Unknown'),
                 "citations": paper.get('citations', 0),
-                "authors": paper.get('authors', [])[:3],  # First 3 authors
+                "authors": paper.get('authors', [])[:3],
                 "venue": paper.get('venue', 'Unknown')
             }
             for paper in sorted_papers[:10] if paper.get('citations', 0) > 0
