@@ -139,11 +139,10 @@ When the system has no or few relevant documents for the user research query in 
 When enough relevant documents are already available in the knowledge base, the system leverages vector search for instant semantic similarity matching, dramatically reducing processing time.
 
 **Processing Time**: ~1-2 minutes for comprehensive analysis
-**Performance Improvement**: **80% faster** than empty knowledge base scenario
+**Performance Improvement**: **80% faster** than senario 1
 
 ### Performance Benefits
 - **Vector Search Efficiency**: Instant retrieval from pre-indexed documents
-- **Reduced API Calls**: Minimal external database queries
 - **Cached Analysis**: Leverages previously processed content
 - **Semantic Matching**: Intelligent relevance scoring without full document processing
 
