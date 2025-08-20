@@ -15,6 +15,8 @@ An intelligent research platform that leverages AI agents and vector search to d
 
 ### System Components
 
+![Architecture](images/global-architecture.png)
+
 #### Frontend
 - **Framework**: Flask web application
 - **Features**: Research query submission and result visualization
@@ -26,11 +28,6 @@ An intelligent research platform that leverages AI agents and vector search to d
 #### Data Storage
 - **Vector Database**: Chroma for embedding storage and similarity search
 - **Cache**: Redis for session management and temporary data storage
-
-#### External Integrations
-- **Google Scholar**: Academic paper discovery
-- **Semantic Scholar**: Enhanced metadata and citation analysis
-- **ArXiv**: Preprint repository access
 
 ### Workflow Process
 ![Workflow](images/workflow.png)
