@@ -139,7 +139,7 @@ class ResearchWorkflow:
                 k=50
             )
             # Keep docs with score above threshold
-            relevant_docs = [doc for doc, score in docs_with_scores if score > 0.2]
+            relevant_docs = [doc for doc, score in docs_with_scores if score > 0.8]
                         
             # Convert existing docs to paper format for synthesis
             existing_papers = []
@@ -209,12 +209,6 @@ class ResearchWorkflow:
                 serializable_papers.append(paper_dict)
             
             state["web_extracted_contents"] = serializable_papers
-            from pathlib import Path
-            import json
-            output_path = Path("discovered.json")
-            with output_path.open("w", encoding="utf-8") as f:
-                    json.dump(state["web_extracted_contents"], f, ensure_ascii=False, indent=2)
-            logger.info(f"Found {len(papers)} web research papers")
             return state
             
         except Exception as e:

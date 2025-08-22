@@ -203,7 +203,51 @@ class SynthesisAgent:
         except Exception as e:
             logger.error(f"Error generating summary: {e}")
             return f"Summary generation failed: {e}"
+        
+    async def generate_cluster_label(self, abstracts, titles):
+        """Generate a concise, meaningful label for a cluster using AI"""
+        # Sample abstracts and titles for labeling
+        sample_abstracts = abstracts[:3]
+        sample_titles = titles[:10]
+        
+        # Create prompt text
+        titles_text = "\n".join([f"- {title}" for title in sample_titles])
+        abstracts_text = "\n\n".join([f"Abstract {i+1}: {abs_text[:300]}..." 
+                                    for i, abs_text in enumerate(sample_abstracts)])
+        
+        # Create prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content="""You are a research analyst tasked with creating concise topic labels 
+            for academic research clusters. Generate precise, academic terminology that captures the core 
+            research area in 2-4 words maximum."""),
+            
+            HumanMessage(content=f"""
+            Based on these research paper titles and abstracts, generate a concise research topic label:
+
+            TITLES:
+            {titles_text}
+
+            ABSTRACTS:
+            {abstracts_text}
+
+            Requirements:
+            - 1-3 words maximum
+            - No explanation your response must be solely the generated label
+            - Descriptive and specific
+            - Academic/technical terminology
+            - Captures the core research area
     
+
+            Topic Label:""")
+        ])
+        
+        try:
+            response = await self.llm.ainvoke(prompt.format_messages())
+            return response.content.strip()
+        except Exception as e:
+            logger.error(f"Error generating cluster label: {e}")
+            return f"Research Cluster {hash(str(abstracts[:100])) % 1000}"
+                    
     async def extract_key_findings(
         self, 
         query: str, 

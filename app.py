@@ -268,7 +268,7 @@ class IntentProcessor:
                 return {
                     "request_id": api_data.get('request_id'),
                     "type": "research",
-                    "content": f"🔍 Research started! Request ID: {api_data.get('request_id')}\n\nI'm discovering and analyzing papers related to: *{message}*\n\nThis may take a few minutes. You can check the progress using the request ID."
+                    "content": f"🔍 Research started! This may take a few minutes. You can check the progress."
                 }
             else:
                 error_msg = "Failed to start research task"
@@ -339,30 +339,64 @@ def index():
 @app.route('/health')
 @limiter.exempt
 def health_check():
-    """Enhanced health check"""
+    """Enhanced health check with proper status codes"""
     try:
         # Check API connectivity
-        api_response = make_api_request('/')
-        api_healthy = api_response and api_response.status_code == 200
+        api_healthy = False
+        api_status = "unhealthy"
+        api_error = None
+        
+        try:
+            api_response = make_api_request('/')
+            if api_response and api_response.status_code == 200:
+                api_healthy = True
+                api_status = "healthy"
+        except Exception as e:
+            api_error = str(e)
+            logger.error(f"Health check API error: {e}")
         
         # Check Redis connectivity
         redis_healthy = True
+        redis_status = "healthy"
+        redis_error = None
+        
         if USE_REDIS:
             try:
                 redis_client.ping()
-            except:
+            except Exception as e:
                 redis_healthy = False
+                redis_status = "unhealthy"
+                redis_error = str(e)
         
-        return jsonify({
-            "status": "healthy" if api_healthy else "degraded",
+        # Determine overall status
+        overall_healthy = api_healthy and redis_healthy
+        
+        response_data = {
+            "status": "healthy" if overall_healthy else "unhealthy",
             "timestamp": datetime.utcnow().isoformat(),
             "components": {
-                "api": "healthy" if api_healthy else "unhealthy",
-                "redis": "healthy" if redis_healthy else "unhealthy",
-                "storage": "healthy"
+                "api": {
+                    "status": api_status,
+                    "error": api_error
+                },
+                "redis": {
+                    "status": redis_status,
+                    "error": redis_error
+                },
+                "storage": {
+                    "status": "healthy"
+                }
             }
-        })
+        }
+        
+        # Return appropriate HTTP status code
+        if overall_healthy:
+            return jsonify(response_data), 200
+        else:
+            return jsonify(response_data), 503
+            
     except Exception as e:
+        logger.error(f"Health check failed: {e}")
         return jsonify({
             "status": "unhealthy",
             "error": str(e),
@@ -644,69 +678,22 @@ def get_research_results(request_id: str):
         logger.error(f"Results retrieval error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/search')
-@limiter.limit("30 per minute")
-def search_knowledge_base():
-    """Enhanced knowledge base search"""
-    query = request.args.get('query', '').strip()
-    k = request.args.get('k', 10, type=int)
-    
-    if not query:
-        return jsonify({"error": "Query parameter is required"}), 400
-    
-    # Validate k parameter
-    k = max(1, min(k, 50))  # Limit between 1 and 50
-    
-    try:
-        response = make_api_request('/search', params={'query': query, 'k': k})
-        
-        if response and response.status_code == 200:
-            results = response.json()
-            
-            # Add search metadata
-            results['search_metadata'] = {
-                'query': query,
-                'requested_count': k,
-                'actual_count': len(results.get('results', [])),
-                'timestamp': datetime.utcnow().isoformat()
-            }
-            
-            return jsonify(results)
-        else:
-            error_msg = "Search failed"
-            if response:
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get('error', error_msg)
-                except:
-                    error_msg = response.text[:200]
-            
-            return jsonify({"error": error_msg}), 500
-            
-    except Exception as e:
-        logger.error(f"Search error: {e}")
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/api/clusters')
-@cache_response(ttl=600)  # Cache for 10 minutes
-def get_research_clusters():
-    """Get research clusters with caching"""
-    query = request.args.get('query', '')
-    k = request.args.get('k', 30, type=int)
-    
-    k = max(5, min(k, 100))  # Limit between 5 and 100
-    
+@cache_response(ttl=43200)  # Cache for 12 hours
+def get_research_trends():
+    """Get research clusters to identify trends"""
+
     try:
-        response = make_api_request('/clusters', params={'query': query, 'k': k})
+        response = make_api_request('/clusters')
         
         if response and response.status_code == 200:
             return jsonify(response.json())
         else:
-            return jsonify({"clusters": [], "message": "No clusters available"}), 200
+            return jsonify([]), 404
             
     except Exception as e:
         logger.error(f"Clusters error: {e}")
-        return jsonify({"clusters": [], "error": str(e)}), 200
+        return jsonify({"error": str(e)}), 500
 
 # ---------- Error Handlers ---------- #
 @app.errorhandler(404)

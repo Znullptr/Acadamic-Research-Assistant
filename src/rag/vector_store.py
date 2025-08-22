@@ -3,6 +3,7 @@ from langchain_chroma import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
+from src.agents.synthesis_agent import SynthesisAgent
 import chromadb
 from chromadb.config import Settings
 import asyncio
@@ -276,14 +277,11 @@ class VectorStoreManager:
                 }
                 nodes.append(node)
             
-            # Try to identify citation relationships
-            # This is simplified - in practice, you'd need better citation parsing
             for paper in papers:
                 if paper.get("references"):
                     source_id = paper.get("url", "")
                     
-                    for ref in paper.get("references", [])[:10]:  # Limit to first 10 references
-                        # Try to match reference to existing papers
+                    for ref in paper.get("references", [])[:10]: 
                         for other_paper in papers:
                             if other_paper.get("title") and other_paper.get("title") in ref:
                                 target_id = other_paper.get("url", "")
@@ -308,71 +306,120 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Error building citation graph: {e}")
             return {"nodes": [], "edges": [], "statistics": {}}
-    
-    async def find_research_clusters(self, query: str, k: int = 20) -> Dict[str, Any]:
-        """Find clusters of related research"""
+        
+    async def find_research_trends(self, synthesis_agent: SynthesisAgent, n_clusters: int = 5, min_papers_per_cluster: int = 3) -> Dict[str, Any]:
+        """Find research trends using content-based clustering with AI-generated labels
+        
+        Args:
+            n_clusters: Number of clusters to create
+            min_papers_per_cluster: Minimum papers required for a cluster to be included
+        """
         try:
-            # Get relevant documents
-            docs_with_scores = await self.similarity_search_with_scores(query, k=k)
+            from sklearn.cluster import KMeans
+            from sklearn.feature_extraction.text import TfidfVectorizer
             
-            if not docs_with_scores:
-                return {"clusters": [], "papers": []}
+            # Get ALL documents from vectorstore
+            docs = await self.similarity_search("", k=1000)
             
-            # Group documents by paper
-            paper_groups = {}
-            for doc, score in docs_with_scores:
+            if not docs:
+                return []
+            
+            # Group by paper id
+            paper_data = {}
+            paper_contents = []
+            paper_ids_ordered = []
+            
+            for doc in docs:
+
                 paper_id = doc.metadata.get("paper_id", "unknown")
-                if paper_id not in paper_groups:
-                    paper_groups[paper_id] = {
+                if paper_id not in paper_data:
+                    
+                    # Extract abstract 
+                    abstract = doc.page_content
+                    
+                    paper_data[paper_id] = {
                         "paper_id": paper_id,
-                        "title": doc.metadata.get("title", "Unknown"),
-                        "documents": [],
-                        "avg_score": 0,
-                        "venue": doc.metadata.get("venue", "Unknown")
+                        "title": doc.metadata.get("title", ""),
+                        "abstract": abstract,
+                    }
+                    
+                    paper_contents.append(abstract)
+                    paper_ids_ordered.append(paper_id)
+        
+            
+            if len(paper_contents) < n_clusters:
+                n_clusters = max(2, len(paper_contents) // 2)
+            
+            # Vectorize abstracts using TF-IDF
+            vectorizer = TfidfVectorizer(
+                max_features=5000,
+                stop_words='english',
+                ngram_range=(1, 2),
+                min_df=2,
+                max_df=0.95
+            )
+            
+            tfidf_matrix = vectorizer.fit_transform(paper_contents)
+            
+            # Perform K-means clustering
+            kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+            cluster_labels = kmeans.fit_predict(tfidf_matrix)
+            
+            # Group papers by cluster
+            clusters = {}
+            for idx, cluster_id in enumerate(cluster_labels):
+                paper_id = paper_ids_ordered[idx]
+                
+                if cluster_id not in clusters:
+                    clusters[cluster_id] = {
+                        "papers": [],
+                        "abstracts": []
                     }
                 
-                paper_groups[paper_id]["documents"].append((doc, score))
+                paper = paper_data[paper_id]
+                clusters[cluster_id]["papers"].append(paper)
+                clusters[cluster_id]["abstracts"].append(paper["abstract"])
+                
+            # Filter clusters by minimum paper count
+            filtered_clusters = {k: v for k, v in clusters.items() 
+                            if len(v["papers"]) >= min_papers_per_cluster}
             
-            # Calculate average scores and sort
-            clustered_papers = []
-            for paper_data in paper_groups.values():
-                scores = [score for _, score in paper_data["documents"]]
-                paper_data["avg_score"] = sum(scores) / len(scores)
-                paper_data["document_count"] = len(paper_data["documents"])
-                clustered_papers.append(paper_data)
-            
-            # Sort by relevance score
-            clustered_papers.sort(key=lambda x: x["avg_score"], reverse=True)
-            
-            # Group by venue/topic for clustering
-            venue_clusters = {}
-            for paper in clustered_papers:
-                venue = paper["venue"]
-                if venue not in venue_clusters:
-                    venue_clusters[venue] = []
-                venue_clusters[venue].append(paper)
-            
-            clusters = [
-                {
-                    "cluster_id": venue,
-                    "papers": papers,
-                    "size": len(papers),
-                    "avg_relevance": sum(p["avg_score"] for p in papers) / len(papers)
+            # Generate labels for each cluster
+            labeled_trends = []
+            for cluster_id, cluster_data in filtered_clusters.items():
+                papers = cluster_data["papers"]
+                unique_papers = len(papers)
+                
+                # Generate AI label for this cluster
+                cluster_label = await synthesis_agent.generate_cluster_label(
+                    cluster_data["abstracts"], 
+                    [p["title"] for p in papers]
+                )   
+                
+                trend = {
+                    "topic": cluster_label,
+                    "cluster_id": cluster_id,
+                    "unique_papers": unique_papers,
                 }
-                for venue, papers in venue_clusters.items()
+                
+                labeled_trends.append(trend)
+            
+            # Sort by number of papers
+            labeled_trends.sort(key=lambda x: x["unique_papers"], reverse=True)
+            
+            trends = [
+                {
+                    "label": trend["topic"],
+                    "size": trend["unique_papers"]
+                } 
+                for trend in labeled_trends
             ]
             
-            clusters.sort(key=lambda x: x["avg_relevance"], reverse=True)
-            
-            return {
-                "clusters": clusters,
-                "total_papers": len(clustered_papers),
-                "query": query
-            }
+            return trends
             
         except Exception as e:
-            logger.error(f"Error finding research clusters: {e}")
-            return {"clusters": [], "papers": []}
+            logger.error(f"Error finding research trends: {e}")
+            return []
     
     def clean_content(self, content: str) -> str:
         """Clean and normalize content for vector storage"""

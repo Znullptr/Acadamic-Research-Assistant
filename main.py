@@ -323,12 +323,14 @@ async def get_statistics():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/clusters")
-async def get_research_clusters(query: str, k: int = 20):
+async def get_research_clusters():
     """Get research clusters for a query"""
     
     try:
-        clusters = await vector_store_instance.find_research_clusters(query, k=k)
-        return clusters
+        research_trends = await vector_store_instance.find_research_trends(workflow_instance.synthesis_agent)
+        logger.info(f"trends extracted {research_trends}")
+
+        return research_trends
         
     except Exception as e:
         logger.error(f"Clustering error: {e}")
