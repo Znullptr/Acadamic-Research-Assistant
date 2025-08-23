@@ -410,6 +410,89 @@ def start_chat_session():
     session_id = SessionManager.create_session()
     return jsonify({"session_id": session_id})
 
+@app.route('/api/session/validate', methods=['POST'])
+@limiter.limit("20 per minute")
+@validate_session
+def validate_session_endpoint(session_id: str, session_data: Dict):
+    """Validate if a session exists and is still active"""
+    try:
+        return jsonify({
+            "valid": True,
+            "session_id": session_id,
+            "created_at": session_data.get('created_at'),
+            "message_count": len(session_data.get('messages', []))
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Session validation error: {e}")
+        return jsonify({
+            "valid": False,
+            "reason": "Internal error"
+        }), 500
+
+
+# Session cleanup endpoint for expired sessions
+@app.route('/api/session/cleanup', methods=['POST'])
+@limiter.limit("5 per minute")
+def cleanup_expired_sessions():
+    """Clean up expired sessions (admin/maintenance endpoint)"""
+    try:
+        cleaned_count = 0
+        max_session_age = timedelta(hours=24)
+        current_time = datetime.utcnow()
+        
+        if USE_REDIS:
+            try:
+                # Get all session keys
+                session_keys = redis_client.keys("session:*")
+                
+                for key in session_keys:
+                    try:
+                        session_data_str = redis_client.get(key)
+                        if session_data_str:
+                            session_data = json.loads(session_data_str)
+                            created_at = datetime.fromisoformat(session_data.get('created_at', ''))
+                            
+                            if current_time - created_at > max_session_age:
+                                redis_client.delete(key)
+                                cleaned_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error cleaning session {key}: {e}")
+                        # Delete corrupted session data
+                        redis_client.delete(key)
+                        cleaned_count += 1
+                        
+            except Exception as e:
+                logger.error(f"Redis cleanup error: {e}")
+        else:
+            # Clean up in-memory sessions
+            expired_sessions = []
+            
+            for session_id, session_data in chat_sessions.items():
+                try:
+                    created_at = datetime.fromisoformat(session_data.get('created_at', ''))
+                    if current_time - created_at > max_session_age:
+                        expired_sessions.append(session_id)
+                except Exception as e:
+                    logger.warning(f"Error checking session {session_id}: {e}")
+                    expired_sessions.append(session_id)
+            
+            for session_id in expired_sessions:
+                chat_sessions.pop(session_id, None)
+                cleaned_count += 1
+        
+        return jsonify({
+            "message": f"Cleaned up {cleaned_count} expired sessions",
+            "cleaned_count": cleaned_count
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Session cleanup error: {e}")
+        return jsonify({
+            "error": "Cleanup failed",
+            "message": str(e)
+        }), 500
+
 @app.route('/api/chat', methods=['POST'])
 @limiter.limit("30 per minute")
 @validate_session

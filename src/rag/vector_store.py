@@ -7,6 +7,7 @@ from src.agents.synthesis_agent import SynthesisAgent
 import chromadb
 from chromadb.config import Settings
 import asyncio
+import re 
 import logging
 import uuid
 from pathlib import Path
@@ -173,13 +174,25 @@ class VectorStoreManager:
         self, 
         query: str, 
         k: int = 5,
-        filter_metadata: Optional[Dict[str, Any]] = None
     ) -> List[Tuple[Document, float]]:
         """Perform similarity search with relevance scores"""
         try:
             search_kwargs = {"k": k}
-            if filter_metadata:
-                search_kwargs["filter"] = filter_metadata
+            filter = None
+            #query_words = set(re.findall(r'\b\w+\b', query.lower()))
+            '''
+            # Remove common stop words
+            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
+            query_words = query_words - stop_words
+            filter = {
+                "$or": [
+                    {"abstract": {"$in": [word]}} for word in query_words
+                ]
+            }
+            '''
+
+            if filter:
+                search_kwargs["filter"] = filter
             
             results = await asyncio.to_thread(
                 self.vectorstore.similarity_search_with_score,

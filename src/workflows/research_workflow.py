@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Dict, Any, Optional, Callable
 from dataclasses import asdict
 import logging
+import re
 import asyncio
 
 from src.agents.discovery_agent import DiscoveryAgent
@@ -136,7 +137,7 @@ class ResearchWorkflow:
             # Filter by relevance score if available
             docs_with_scores = await self.vector_store.similarity_search_with_scores(
                 query=state["query"],
-                k=50
+                k=1000,
             )
             # Keep docs with score above threshold
             relevant_docs = [doc for doc, score in docs_with_scores if score > 0.8]
@@ -416,7 +417,10 @@ class ResearchWorkflow:
     
     async def run_research(self, query: str, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """Run the complete research workflow with optional progress callback"""
-        
+
+        # Cleanup query        
+        query = re.sub(r'\s+', ' ', re.sub(r'\b(?:research|papers?)\b', '', query, flags=re.IGNORECASE)).strip() 
+
         # Initialize state
         initial_state = ResearchState(
             query=query,

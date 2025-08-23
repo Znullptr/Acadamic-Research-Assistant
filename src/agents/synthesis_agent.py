@@ -187,13 +187,15 @@ class SynthesisAgent:
             Key abstracts and content snippets:
             {' '.join(data['abstracts'][:5])}
             
-            Please provide a 300-500 word executive summary covering:
+            Please provide a concise 200-300 word executive summary covering:
             1. The current state of research in this area
             2. Main themes and approaches
             3. Level of research activity and maturity
             4. Key challenges being addressed
             
-            Focus on being informative and objective.
+            Guidelines:
+            1. Avoid generating outputs in the form of ordered or unordered lists.
+            2. Focus on being informative and objective.
             """)
         ])
         

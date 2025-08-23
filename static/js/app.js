@@ -145,7 +145,6 @@ function switchPage(pageName) {
             break;
     }
     
-    console.log('Switching to page:', pageName);
 }
 
 
@@ -506,22 +505,22 @@ function showSimpleResults(content) {
 // Show research results
 function showResearchResults(results) {
     const synthesis = results.synthesis || {};
-    const papers_found = results.papers_found || 0;
-    const content_extracted = results.content_extracted || 0;
+    const papers_found = results.papers_found || results.content_extracted || 0;
     const quality_score = results.quality_score || 0;
 
     // Calculate metrics
-    const totalCitations = synthesis.citation_network?.citation_stats?.total_citations || 0;
+    const totalCitations = synthesis.citation_network.citation_stats.total_citations || 0;
     const keyFindingsCount = synthesis.key_findings ? synthesis.key_findings.length : 0;
+    const researchTrendsCount = synthesis.methodology_trends ? synthesis.methodology_trends.length : 0;
     const researchGapsCount = synthesis.research_gaps ? synthesis.research_gaps.length : 0;
 
     // Populate metrics
     populateMetrics([
         { value: papers_found.toString(), label: 'Papers Found' },
-        { value: content_extracted.toString(), label: 'Extracted Web Content' },
         { value: `${quality_score}/100`, label: 'Quality Score' },
         { value: formatNumber(totalCitations), label: 'Total Citations' },
         { value: keyFindingsCount.toString(), label: 'Key Findings' },
+        { value: researchTrendsCount.toString(), label: 'Research Trends' },
         { value: researchGapsCount.toString(), label: 'Research Gaps' }
     ]);
 
@@ -571,7 +570,7 @@ function showResearchResults(results) {
         sections.push({
             icon: 'fas fa-cogs',
             title: 'Methodology Trends',
-            items: synthesis.methodology_trends.slice(1).map((trend) => {
+            items: synthesis.methodology_trends.slice(1).map((trend, index) => {
                 const colonIndex = trend.indexOf(':');
                 if (colonIndex !== -1 && colonIndex > 0) {
                     const title = trend.substring(0, colonIndex).replace(/\*/g, '').trim();

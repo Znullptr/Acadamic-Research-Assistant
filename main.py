@@ -328,8 +328,6 @@ async def get_research_clusters():
     
     try:
         research_trends = await vector_store_instance.find_research_trends(workflow_instance.synthesis_agent)
-        logger.info(f"trends extracted {research_trends}")
-
         return research_trends
         
     except Exception as e:
