@@ -37,7 +37,8 @@ class VectorStoreManager:
             # Initialize embeddings
             self.embeddings = GoogleGenerativeAIEmbeddings(
                 google_api_key=self.config.google_api_key,
-                model="models/embedding-001"
+                model="models/embedding-001",
+                task_type="retrieval_query" 
             )
             
             # Ensure the database directory exists
@@ -86,6 +87,7 @@ class VectorStoreManager:
     ) -> List[str]:
         """Add a document to the vector store"""
         try:
+            # print(f"Contentttttt: {content}")
             if not content or not content.strip():
                 logger.warning("Empty content provided, skipping")
                 return []
@@ -96,10 +98,8 @@ class VectorStoreManager:
                 "content_length": len(content),
                 **metadata
             }
-            # Clean and prepare content
-            cleaned_content = self.clean_content(content)
             
-            if chunk_content and len(cleaned_content) > self.config.chunk_size:
+            if chunk_content and len(content) > self.config.chunk_size:
                 # Split content into chunks
                 texts = self.text_splitter.split_text(cleaned_content)
                 documents = []
@@ -119,7 +119,7 @@ class VectorStoreManager:
             else:
                 # Add as single document
                 documents = [Document(
-                    page_content=cleaned_content,
+                    page_content=content,
                     metadata=doc_metadata
                 )]
             # Add to vector store
@@ -170,7 +170,7 @@ class VectorStoreManager:
             logger.error(f"Error in similarity search: {e}")
             return []
     
-    async def similarity_search_with_scores(
+    async def get_relevant_documents(
         self, 
         query: str, 
         k: int = 5,
@@ -178,24 +178,9 @@ class VectorStoreManager:
         """Perform similarity search with relevance scores"""
         try:
             search_kwargs = {"k": k}
-            filter = None
-            #query_words = set(re.findall(r'\b\w+\b', query.lower()))
-            '''
-            # Remove common stop words
-            stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by'}
-            query_words = query_words - stop_words
-            filter = {
-                "$or": [
-                    {"abstract": {"$in": [word]}} for word in query_words
-                ]
-            }
-            '''
-
-            if filter:
-                search_kwargs["filter"] = filter
             
             results = await asyncio.to_thread(
-                self.vectorstore.similarity_search_with_score,
+                self.vectorstore.similarity_search_with_relevance_scores,
                 query,
                 **search_kwargs
             )
@@ -348,7 +333,7 @@ class VectorStoreManager:
                 if paper_id not in paper_data:
                     
                     # Extract abstract 
-                    abstract = doc.page_content
+                    abstract = doc.metadata.get("abstract", "")
                     
                     paper_data[paper_id] = {
                         "paper_id": paper_id,
@@ -433,17 +418,6 @@ class VectorStoreManager:
         except Exception as e:
             logger.error(f"Error finding research trends: {e}")
             return []
-    
-    def clean_content(self, content: str) -> str:
-        """Clean and normalize content for vector storage"""
-        # Remove excessive whitespace
-        content = " ".join(content.split())
-        
-        # Remove very short lines that might be artifacts
-        lines = content.split('\n')
-        cleaned_lines = [line.strip() for line in lines if len(line.strip()) > 10]
-        
-        return '\n'.join(cleaned_lines)
     
     def extract_year(self, date_str: Optional[str]) -> Optional[int]:
         """Extract year from date string"""

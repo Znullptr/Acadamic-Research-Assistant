@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 from src.processing.pdf_processor import PDFProcessor
 from dataclasses import asdict
+import re
 import shutil
 
 async def process_pdf_papers(config, vector_store, upload_dir):
@@ -90,5 +91,27 @@ async def process_pdf_papers(config, vector_store, upload_dir):
         results["errors"].append(f"General processing error: {str(e)}")
         results["error_count"] += 1
         return results
+    
+
+def clean_query(query: str):
+        # Tokenize query into words
+        query_words = set(re.findall(r'\b\w+\b', query.lower()))
+
+        # Define stop words
+        stop_words = {
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", 
+            "for", "of", "with", "by"
+        }
+
+        # Add research filler words
+        research_words = {"find", "paper", "papers", "research", "analyse", "analyze", "study", "studies"}
+
+        # Remove unwanted words
+        filtered_words = query_words - stop_words - research_words
+
+        # Rebuild cleaned query
+        cleaned_query = " ".join(filtered_words)
+
+        return cleaned_query
 
 

@@ -520,7 +520,7 @@ function showResearchResults(results) {
         { value: `${quality_score}/100`, label: 'Quality Score' },
         { value: formatNumber(totalCitations), label: 'Total Citations' },
         { value: keyFindingsCount.toString(), label: 'Key Findings' },
-        { value: researchTrendsCount.toString(), label: 'Research Trends' },
+        { value: (researchTrendsCount - 1).toString(), label: 'Research Trends' },
         { value: researchGapsCount.toString(), label: 'Research Gaps' }
     ]);
 
@@ -567,6 +567,7 @@ function showResearchResults(results) {
 
     // Methodology Trends
     if (synthesis.methodology_trends && synthesis.methodology_trends.length > 0) {
+        console.log(synthesis.methodology_trends)
         sections.push({
             icon: 'fas fa-cogs',
             title: 'Methodology Trends',

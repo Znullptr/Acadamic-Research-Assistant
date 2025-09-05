@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from typing import TypedDict, List, Dict, Any, Optional, Callable
 from dataclasses import asdict
+from src.utils.helpers import clean_query
 import logging
 import re
 import asyncio
@@ -134,13 +135,13 @@ class ResearchWorkflow:
 
             await asyncio.sleep(5)
             
-            # Filter by relevance score if available
-            docs_with_scores = await self.vector_store.similarity_search_with_scores(
-                query=state["query"],
+            # Filter by relevance score
+            docs_with_scores = await self.vector_store.get_relevant_documents(
+                query=clean_query(state["query"]),
                 k=1000,
             )
             # Keep docs with score above threshold
-            relevant_docs = [doc for doc, score in docs_with_scores if score > 0.8]
+            relevant_docs = [doc for doc, score in docs_with_scores if score > 0.7]
                         
             # Convert existing docs to paper format for synthesis
             existing_papers = []
@@ -151,11 +152,11 @@ class ResearchWorkflow:
                     "publication_date": doc.metadata.get("pub_date", ""),
                     "venue": doc.metadata.get("venue", ""),
                     "authors": doc.metadata.get("authors", []),
-                    "citations": doc.metadata.get("citations", 0),
+                    "citations": int(doc.metadata.get("citations", '0')),
                     "doi": doc.metadata.get("doi",""),
                     "sections": doc.metadata.get("sections","").split(","),
                     "references": doc.metadata.get("references","").split(","),
-                    "abstract": doc.page_content,
+                    "abstract": doc.metadata.get("abstract", ""),
                     "text": doc.metadata.get("full_text", ""),
                 }
                 existing_papers.append(paper_dict)
@@ -294,13 +295,14 @@ class ResearchWorkflow:
             for i, content_dict in enumerate(state["web_extracted_contents"]):
                 # Add to vector store
                 await self.vector_store.add_document(
-                    content=content_dict["abstract"],
+                    content=clean_query(state["query"]),
                     metadata={
                         "title": content_dict.get("title", ""),
+                        "abstract": content_dict.get("abstract", ""),
                         "paper_id": content_dict.get("url", ""),
                         "pub_date": content_dict.get("publication_date", ""),
                         "sections": ','.join(content_dict.get("sections", [])),
-                        "citations": content_dict.get("citations", 0),
+                        "citations": str(content_dict.get("citations", 0)),
                         "venue": content_dict.get("venue", ""),
                         "authors": ','.join(content_dict.get("authors", [])),
                         "doi": content_dict.get("doi", ""),
@@ -417,9 +419,6 @@ class ResearchWorkflow:
     
     async def run_research(self, query: str, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """Run the complete research workflow with optional progress callback"""
-
-        # Cleanup query        
-        query = re.sub(r'\s+', ' ', re.sub(r'\b(?:research|papers?)\b', '', query, flags=re.IGNORECASE)).strip() 
 
         # Initialize state
         initial_state = ResearchState(

@@ -1,7 +1,7 @@
 import aiohttp
 import pytesseract
 from pdf2image import convert_from_bytes
-import pdfplumber
+import fitz  # PyMuPDF
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 import logging
@@ -12,6 +12,8 @@ import io
 
 logger = logging.getLogger(__name__)
 
+logging.getLogger('pdfminer.pdfinterp').setLevel(logging.ERROR)
+
 @dataclass
 class ExtractedContent:
     """Structure for extracted PDF content"""
@@ -21,7 +23,7 @@ class ExtractedContent:
     references: List[str]
     
 class PDFProcessor:
-    """Advanced PDF processing with OCR capabilities"""
+    """Advanced PDF processing with OCR capabilities using PyMuPDF"""
     
     def __init__(self, config):
         self.config = config
@@ -86,30 +88,54 @@ class PDFProcessor:
             return None
     
     async def extract_text_based(self, pdf_content: bytes) -> Optional[ExtractedContent]:
-        """Extract text from text-based PDFs"""
+        """Extract text from text-based PDFs using PyMuPDF"""
         try:
             metadata = {}
-            
-            #pdfplumber for better structure extraction
             sections = []
             tables = []
-            final_text= ""
+            final_text = ""
             
-            with io.BytesIO(pdf_content) as pdf_buffer:
-                with pdfplumber.open(pdf_buffer) as pdf:
-                    for page_num, page in enumerate(pdf.pages):
-                        page_text = page.extract_text()
-                        if page_text:
-                            final_text += page_text + "\n"
-                            
-                            # Extract tables
-                            page_tables = page.extract_tables()
-                            for table in page_tables:
-                                tables.append({
-                                    'content': table,
-                                    'page_number': page_num + 1
-                                })
+            # Open PDF with fitz
+            doc = fitz.open(stream=pdf_content, filetype="pdf")
+            
+            try:
+                # Extract metadata
+                metadata.update({
+                    'title': doc.metadata.get('title', 'Unknown Title'),
+                    'author': doc.metadata.get('author', ''),
+                    'subject': doc.metadata.get('subject', ''),
+                    'creator': doc.metadata.get('creator', ''),
+                    'producer': doc.metadata.get('producer', ''),
+                    'creation_date': doc.metadata.get('creationDate', ''),
+                    'modification_date': doc.metadata.get('modDate', ''),
+                    'pages': doc.page_count,
+                    'extraction_method': 'Text-based (PyMuPDF)'
+                })
+                
+                for page_num in range(doc.page_count):
+                    page = doc[page_num]
+                    
+                    # Extract text with layout preservation
+                    page_text = page.get_text("text")
+                    
+                    if page_text:
+                        final_text += page_text + "\n"
                         
+                        # Extract tables using text blocks
+                        page_tables = self.extract_tables_from_page(page)
+                        for table in page_tables:
+                            tables.append({
+                                'content': table,
+                                'page_number': page_num + 1
+                            })
+                
+                # Add table information to metadata
+                metadata['table_count'] = len(tables)
+                metadata['tables'] = tables
+                
+            finally:
+                doc.close()
+            
             if len(final_text.strip()) < 200:
                 return None
                 
@@ -127,6 +153,49 @@ class PDFProcessor:
         except Exception as e:
             logger.error(f"Text-based extraction error: {e}")
             return None
+    
+    def extract_tables_from_page(self, page) -> List[List[List[str]]]:
+        """Extract tables from a fitz page using text blocks"""
+        tables = []
+        
+        try:
+            # Get text with detailed information
+            blocks = page.get_text("dict")["blocks"]
+            
+            # Simple table detection based on aligned text blocks
+            table_candidates = []
+            for block in blocks:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            # Look for patterns that might indicate tabular data
+                            text = span["text"].strip()
+                            if text and (
+                                len(text.split()) > 2 and 
+                                any(char.isdigit() for char in text) and
+                                "|" in text or "\t" in text or "  " in text
+                            ):
+                                table_candidates.append(text)
+            
+            # Process candidates into table structure
+            if table_candidates:
+                # Simple processing - split by common separators
+                for candidate in table_candidates[:3]:  # Limit to 3 tables per page
+                    if "|" in candidate:
+                        rows = [row.split("|") for row in candidate.split("\n") if row.strip()]
+                    elif "\t" in candidate:
+                        rows = [row.split("\t") for row in candidate.split("\n") if row.strip()]
+                    else:
+                        # Split by multiple spaces
+                        rows = [re.split(r'\s{2,}', row) for row in candidate.split("\n") if row.strip()]
+                    
+                    if len(rows) > 1 and all(len(row) > 1 for row in rows):
+                        tables.append(rows)
+            
+        except Exception as e:
+            logger.warning(f"Table extraction error on page: {e}")
+        
+        return tables
     
     async def extract_with_ocr(self, pdf_content: bytes) -> Optional[ExtractedContent]:
         """Extract text using OCR for scanned PDFs"""
@@ -172,7 +241,8 @@ class PDFProcessor:
             metadata = {
                 'pages': len(images),
                 'extraction_method': 'OCR',
-                'title': self.extract_title_from_text(all_text)
+                'title': self.extract_title_from_text(all_text),
+                'figures': figures
             }
             
             return ExtractedContent(
@@ -186,7 +256,7 @@ class PDFProcessor:
             logger.error(f"OCR extraction error: {e}")
             return None
         
-    async def extract_html_content(self, html_content: bytes, original_url: str = "") -> Optional[str]:
+    async def extract_html_content(self, html_content: bytes, original_url: str = "") -> Optional[ExtractedContent]:
         """Handle HTML content and try to extract PDF URL or text content"""
         try:
             html_text = html_content.decode('utf-8', errors='ignore')
@@ -213,7 +283,7 @@ class PDFProcessor:
             references = self.extract_references(cleaned_text)
             
             metadata = { 
-                'extraction_method': 'Html',
+                'extraction_method': 'HTML',
                 'title': self.extract_title_from_text(cleaned_text)
             }
             
@@ -268,7 +338,6 @@ class PDFProcessor:
         flush_section()
         return sections
 
-    
     def extract_references(self, text: str) -> List[str]:
         """Extract references from the text"""
         references = []

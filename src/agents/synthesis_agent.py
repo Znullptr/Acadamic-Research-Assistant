@@ -358,7 +358,7 @@ class SynthesisAgent:
             {' '.join(methodologies[:5])}
             
             Identify 5-7 key methodological trends or common approaches.
-            Return as a simple list of strings, each describing a methodological trend.
+            Return as a simple list of strings, with title: descripiton(describing a methodological trend).
             """)
         ])
         
